@@ -1339,8 +1339,19 @@ impl RelayActor {
     /// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
     async fn close_all_active_relays(&mut self) {
         self.cancel_token.cancel();
-        let tasks = std::mem::take(&mut self.active_relay_tasks);
-        tasks.join_all().await;
+        let mut tasks = std::mem::take(&mut self.active_relay_tasks);
+        // Drain rather than `join_all`. `JoinSet::join_all` resolves a
+        // `JoinError` by panicking, and it does not distinguish a task that
+        // panicked from one that was merely *cancelled* — so an actor aborted
+        // out from under us takes the calling worker thread down with it. That
+        // happens for real: the cancel above is cooperative, but when this
+        // shutdown races the runtime's own teardown (an embedder dropping the
+        // runtime while `close_all_active_relays` is still awaiting), tokio
+        // cancels the remaining tasks and `join_all` panics on the first one.
+        // `join_next` hands back the same `Result` without panicking, so a
+        // cancelled actor ends the drain quietly while a genuine panic is
+        // still observable in the `Err`.
+        while tasks.join_next().await.is_some() {}
 
         self.log_active_relay();
     }
