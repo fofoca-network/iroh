@@ -37,7 +37,24 @@ iroh-relay = { version = "1.0.2", path = "../iroh-relay", default-features = fal
 n0-future = "0.3"
 n0-error = "1.0.0"
 n0-watcher = "1.0.0"
-netwatch = "0.19.1"
+# FORK: the fofoca-network/net-tools fork, branch fix/rtm-miss-storm-0.19.1.
+#
+# netwatch treated RTM_MISS — "a route lookup failed" — as a topology change and
+# rebuilt the whole interface state for each one: `getifaddrs` per address (on
+# Darwin `if_nametoindex` calls it again, so it is quadratic) plus a synchronous
+# CoreWLAN XPC round-trip. But RTM_MISS reports the fate of a *packet*, not a
+# change to the routing table, so every rebuild concluded "no changes detected"
+# — measured, all 276 of them. The kernel broadcasts each one to every AF_ROUTE
+# listener, so an idle iroh endpoint pays for other processes' failed IPv6
+# connects: 2.01% -> 0.06% of a core, measured A/B under one route stream.
+#
+# Pinned here rather than left to each consumer's `[patch.crates-io]` because
+# `[patch]` is not inherited across workspaces — every consumer of this fork
+# would have to restate it, and one that forgot would silently get the storm
+# back. Upstream PR: n0-computer/net-tools#203; drop this hunk once it merges.
+#
+# `portmapper` below must move in lockstep — see the note there.
+netwatch = { version = "0.19.1", git = "https://github.com/fofoca-network/net-tools", rev = "e02960255ef2f5b2ba4aa3d4cf195e0b8673f370" }
 papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 portable-atomic = "1"
@@ -75,7 +92,13 @@ axum = { version = "0.8", optional = true }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 
 hickory-resolver = { version = "0.26.0", default-features = false }
-portmapper = { version = "0.19.1", optional = true, default-features = false }
+# FORK: same net-tools fork and rev as `netwatch` above, and that pairing is
+# load-bearing rather than tidy. `portmapper` depends on `netwatch` by **path**
+# within its own workspace, so taking portmapper from crates.io while netwatch
+# comes from the fork puts *two* netwatch crates in one graph — and their types
+# cross the portmapper/iroh boundary, so it fails to compile rather than merely
+# duplicating. Either both move or neither does.
+portmapper = { version = "0.19.1", git = "https://github.com/fofoca-network/net-tools", rev = "e02960255ef2f5b2ba4aa3d4cf195e0b8673f370", optional = true, default-features = false }
 noq = { version = "1.0.1", default-features = false, features = ["runtime-tokio", "rustls"] }
 tokio = { version = "1", features = [
     "io-util",
