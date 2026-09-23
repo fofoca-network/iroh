@@ -2754,6 +2754,48 @@ mod tests {
         // much internal state for now.
     }
 
+    /// Regression test: the `RemoteStateActor` must not idle out while noq still
+    /// retransmits handshake packets to its mapped address. Its shutdown evicts the
+    /// mapped address, and every later retransmit logs "unknown NodeIdMappedAddr".
+    #[tokio::test(start_paused = true)]
+    #[traced_test]
+    async fn test_mapped_addr_survives_handshake_to_unreachable_remote() {
+        let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
+        let endpoint_id_2 = SecretKey::from_bytes(&[2u8; 32]).public();
+        let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
+
+        let unreachable_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            [TransportAddr::Ip(
+                // Reserved IP range for documentation (unreachable)
+                SocketAddrV4::new([192, 0, 2, 1].into(), 12345).into(),
+            )],
+        );
+        let addr_2 = sock_1
+            .resolve_remote(unreachable_addr_2)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let mut transport_config = noq::TransportConfig::default();
+        transport_config.max_idle_timeout(Some(Duration::from_secs(120).try_into().unwrap()));
+        let _connect = AbortOnDropHandle::new(tokio::spawn(socket_connect_with_transport_config(
+            sock_1.noq_endpoint().clone(),
+            secret_key_1,
+            addr_2,
+            endpoint_id_2,
+            Arc::new(transport_config),
+        )));
+
+        // Past the actor's 60 s idle timeout, with the handshake still retransmitting.
+        time::sleep(Duration::from_secs(70)).await;
+
+        assert_eq!(
+            sock_1.mapped_addrs.endpoint_addrs.lookup(&addr_2),
+            Some(endpoint_id_2)
+        );
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_try_send_no_udp_addr_or_relay_url() {
