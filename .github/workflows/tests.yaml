@@ -365,6 +365,10 @@ jobs:
             release-os: darwin
             release-arch: aarch64
             runner: macos-latest
+    env:
+      # Minimal versions cannot stay warning-free without needlessly tight deps (n0-computer/iroh#4500).
+      RUSTFLAGS: ""
+      RUSTDOCFLAGS: ""
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
@@ -394,6 +398,9 @@ jobs:
       # sccache backend is selected at runtime in "Configure sccache backend":
       # local disk on self-hosted, GHA-backed on Blacksmith (ephemeral).
       RUSTC_WRAPPER: "sccache"
+      # Minimal versions cannot stay warning-free without needlessly tight deps (n0-computer/iroh#4500).
+      RUSTFLAGS: ""
+      RUSTDOCFLAGS: ""
     steps:
       - name: Configure sccache backend
         shell: bash
