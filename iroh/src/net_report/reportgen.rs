@@ -818,7 +818,10 @@ async fn run_https_probe(
     #[cfg(not(wasm_browser))] tls_config: rustls::ClientConfig,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay.join(RELAY_PROBE_PATH)?;
+    #[cfg_attr(not(wasm_browser), allow(unused_mut))]
+    let mut url = relay.join(RELAY_PROBE_PATH)?;
+    #[cfg(wasm_browser)]
+    iroh_relay::http::remove_trailing_host_dot(&mut url);
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:

@@ -22,6 +22,20 @@ pub const CLIENT_AUTH_HEADER: HeaderName = HeaderName::from_static("x-iroh-relay
 #[cfg(any(wasm_browser, feature = "server"))]
 pub(crate) const AUTH_TOKEN_URL_QUERY_PARAM: &str = "token";
 
+/// Removes one trailing dot from the host of `url`, if there is one.
+///
+/// Browsers such as Safari reject a fully qualified host like `relay.example.` in
+/// WebSocket and fetch URLs.
+pub fn remove_trailing_host_dot(url: &mut url::Url) {
+    let Some(url::Host::Domain(domain)) = url.host() else {
+        return;
+    };
+    if let Some(domain) = domain.strip_suffix('.').map(str::to_owned) {
+        // Only fails for an empty host, which leaves the URL unchanged.
+        url.set_host(Some(&domain)).ok();
+    }
+}
+
 /// The relay protocol version negotiated between client and server.
 ///
 /// Sent as the websocket sub-protocol header `Sec-Websocket-Protocol` from
@@ -125,6 +139,31 @@ mod tests {
         assert_eq!(ProtocolVersion::ALL.len(), ProtocolVersion::COUNT);
         for &v in ProtocolVersion::ALL {
             assert_eq!(ProtocolVersion::from_str(v.to_str()).unwrap(), v);
+        }
+    }
+
+    #[test]
+    fn remove_trailing_host_dot_cases() {
+        let cases = [
+            (
+                "wss://use1-1.relay.n0.iroh.link./relay",
+                "wss://use1-1.relay.n0.iroh.link/relay",
+            ),
+            (
+                "https://relay.example.com.:8443/ping?x=1",
+                "https://relay.example.com:8443/ping?x=1",
+            ),
+            (
+                "https://relay.example.com/ping",
+                "https://relay.example.com/ping",
+            ),
+            ("https://127.0.0.1:3340/ping", "https://127.0.0.1:3340/ping"),
+            ("https://[::1]:3340/ping", "https://[::1]:3340/ping"),
+        ];
+        for (input, expected) in cases {
+            let mut url = url::Url::parse(input).unwrap();
+            remove_trailing_host_dot(&mut url);
+            assert_eq!(url.as_str(), expected, "input: {input}");
         }
     }
 }

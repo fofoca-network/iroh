@@ -37,7 +37,8 @@ env:
 jobs:
   netsim-release:
     permissions: write-all
-    if: ${{github.ref_name=='main' && github.event_name == 'push'}}
+    # netsim needs n0's runner setup (chuck, mininet), which the fofoca fork does not have.
+    if: ${{github.repository_owner != 'fofoca-network' && github.ref_name=='main' && github.event_name == 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit
     with:
@@ -51,7 +52,7 @@ jobs:
 
   netsim-perf:
     permissions: write-all
-    if: ${{github.event_name != 'push'}}
+    if: ${{github.repository_owner != 'fofoca-network' && github.event_name != 'push'}}
     uses: './.github/workflows/netsim_runner.yaml'
     secrets: inherit
     with:

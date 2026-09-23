@@ -278,7 +278,21 @@ impl RemoteStateActor {
                 }
                 msg = inbox.recv() => {
                     match msg {
-                        Some(msg) => self.handle_message(msg).await,
+                        Some(msg) => {
+                            // A handshake in flight has no registered connection yet, so
+                            // its traffic must keep the actor alive: the actor's shutdown
+                            // evicts the mapped address that noq still sends to.
+                            if matches!(
+                                msg,
+                                RemoteStateMessage::SendDatagram(..)
+                                    | RemoteStateMessage::ResolveRemote(..)
+                            ) {
+                                idle_timeout
+                                    .as_mut()
+                                    .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
+                            }
+                            self.handle_message(msg).await
+                        }
                         None => break,
                     }
                 }

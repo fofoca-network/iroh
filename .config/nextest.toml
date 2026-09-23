@@ -14,6 +14,16 @@ filter = 'test(::run_in_isolation::)'
 test-group = 'run-in-isolation'
 threads-required = 32
 
+# Waits past the 60 s RemoteStateActor idle timeout; noq retransmits on the real
+# clock, so the paused test clock cannot shorten it.
+[[profile.ci.overrides]]
+filter = 'test(=socket::tests::test_mapped_addr_survives_handshake_to_unreachable_remote)'
+slow-timeout = { period = "30s", terminate-after = 3 }
+
+[[profile.default.overrides]]
+filter = 'test(=socket::tests::test_mapped_addr_survives_handshake_to_unreachable_remote)'
+slow-timeout = { period = "30s", terminate-after = 3 }
+
 [profile.default]
 default-filter = 'not binary(patchbay)'
 slow-timeout = { period = "10s", terminate-after = 3 }
