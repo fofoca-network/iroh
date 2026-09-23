@@ -40,8 +40,8 @@ jobs:
   pick-runner-windows:
     uses: "./.github/workflows/pick-runner.yml"
     with:
-      core_runner: '["self-hosted","windows","x64"]'
-      overflow_runner: '["blacksmith-4vcpu-windows-2025"]'
+      core_runner: '["windows-latest"]'
+      overflow_runner: '["windows-latest"]'
       blacksmith_busy_match: windows
       max_blacksmith_concurrent: 4
       min_free_runners: 1
@@ -85,19 +85,19 @@ jobs:
               os: macOS-latest                                                                                                                                             
               release-os: darwin                                                                                                                                           
               release-arch: aarch64   
-              runs_on: '["self-hosted","macOS","ARM64"]'                                                                                                                   
+              runs_on: '["macos-latest"]'                                                                                                                   
             - name: macOS-arm-latest                                                                                
               features: none                                                                                                                                               
               os: macOS-latest
               release-os: darwin                                                                                                                                           
               release-arch: aarch64                                                                                 
-              runs_on: '["self-hosted","macOS","ARM64"]'
+              runs_on: '["macos-latest"]'
             - name: macOS-arm-latest                                                                                                                                       
               features: default
               os: macOS-latest                                                                                                                                             
               release-os: darwin                                                                                    
               release-arch: aarch64   
-              runs_on: '["self-hosted","macOS","ARM64"]'
+              runs_on: '["macos-latest"]'
     env:
       # Using self-hosted runners so use local cache for sccache and
       # not SCCACHE_GHA_ENABLED.
@@ -359,12 +359,12 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
-            runner: [self-hosted, linux, X64]
+            runner: ubuntu-latest
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
