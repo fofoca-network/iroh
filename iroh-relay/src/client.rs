@@ -409,6 +409,7 @@ impl ClientBuilder {
                 .query_pairs_mut()
                 .append_pair(AUTH_TOKEN_URL_QUERY_PARAM, token);
         }
+        crate::http::remove_trailing_host_dot(&mut dial_url);
 
         debug!(%dial_url, "Dialing relay by websocket");
 
