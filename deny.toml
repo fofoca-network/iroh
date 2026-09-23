@@ -28,4 +28,6 @@ ignore = [
 ]
 
 [sources]
-allow-git = []
+allow-git = [
+  "https://github.com/fofoca-network/net-tools", # netwatch + portmapper fork pin
+]
