@@ -432,6 +432,16 @@ impl RemoteStateActor {
             })
             .into_mut();
 
+        // fofoca patch (Initial fan-out, part 3): the mirror case of the
+        // learn-time hook — this connection may have been created *after* a
+        // custom-transport address was learned, and born on the relay path
+        // that won the handshake race. Queue the book's custom addresses so
+        // the client opens them on it; see `schedule_open_custom_paths`.
+        {
+            let known: Vec<transports::Addr> = self.state.paths.addrs().cloned().collect();
+            self.state.schedule_open_custom_paths(known.iter());
+        }
+
         // Store PathId(0), set path_status and select best path, check if holepunching
         // is needed.
         if let Some(path) = conn.path(PathId::ZERO) {
@@ -810,17 +820,16 @@ impl State {
         // though we might not have a relay transport or ip-capable transport set up.
         // So these errors must not be fatal for this actor (or even this operation).
 
-        if let Some(addr) = self.selected_path.as_ref() {
-            trace!(?addr, "sending datagram to selected path");
-
-            // TODO(Frando): We might want to include a local IP here in the future, if we confidently
-            // know that it is the correct one.
-            // See https://github.com/n0-computer/iroh/issues/4280.
-            let four_tuple = transports::FourTuple::from_remote(addr.remote());
-            if let Err(err) = send_datagram(&mut sender, four_tuple, transmit).await {
-                debug!(?addr, "failed to send datagram on selected_path: {err:#}");
-            }
-        } else {
+        // fofoca patch (Initial fan-out): Initials always fan out to every
+        // known path, even when a path is already selected. The selected-only
+        // fast path starved custom-transport paths permanently: signalling
+        // over the relay leaves the relay *selected* for the remote, a later
+        // dial then sends its Initial to the relay alone, and — since live
+        // connections only ever gain new paths through IP holepunching — the
+        // custom transport (e.g. a negotiated WebRTC session) never becomes a
+        // path on any connection. Initials are rare and tiny, so the fan-out
+        // costs nothing measurable.
+        {
             trace!(
                 paths = ?self.paths.addrs().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
@@ -866,8 +875,10 @@ impl State {
         addrs: BTreeSet<TransportAddr>,
         tx: oneshot::Sender<Result<(), AddressLookupFailed>>,
     ) {
-        let addrs = to_transports_addr(self.endpoint_id, addrs);
-        self.paths.insert_multiple(addrs, Source::App);
+        let addrs: Vec<_> = to_transports_addr(self.endpoint_id, addrs).collect();
+        // fofoca patch (Initial fan-out, part 3): see `schedule_open_custom_paths`.
+        self.schedule_open_custom_paths(addrs.iter());
+        self.paths.insert_multiple(addrs.into_iter(), Source::App);
         self.paths.resolve_remote(tx);
         // Start Address Lookup if we have no selected path.
         self.trigger_address_lookup();
@@ -878,7 +889,22 @@ impl State {
     /// Does not start Address Lookup if we have a selected path or if Address Lookup is
     /// currently running.
     fn trigger_address_lookup(&mut self) {
-        if self.selected_path.is_some() || self.address_lookup_stream.is_some() {
+        if self.address_lookup_stream.is_some() {
+            return;
+        }
+        // fofoca patch (Initial fan-out, part 2): a *relay*-selected path
+        // must not suppress Address Lookup. Signalling over the relay leaves
+        // the relay selected for the remote; skipping the lookup then means
+        // an address registered later — a custom-transport address for a
+        // negotiated WebRTC session, say — is never discovered, the Initial
+        // fan-out has nothing better to fan to, and the connection is pinned
+        // to the relay for as long as the pair lives. A non-relay selected
+        // path still suppresses the lookup, as before.
+        if self
+            .selected_path
+            .as_ref()
+            .is_some_and(|selected| !selected.remote().is_relay())
+        {
             return;
         }
         let stream = self.address_lookup.resolve(self.endpoint_id);
@@ -925,9 +951,13 @@ impl State {
                     let source = Source::AddressLookup {
                         name: item.provenance().to_string(),
                     };
-                    let addrs =
-                        to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
-                    self.paths.insert_multiple(addrs, source);
+                    let addrs: Vec<_> =
+                        to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs)
+                            .collect();
+                    // fofoca patch (Initial fan-out, part 3): see
+                    // `schedule_open_custom_paths`.
+                    self.schedule_open_custom_paths(addrs.iter());
+                    self.paths.insert_multiple(addrs.into_iter(), source);
                 }
             }
         }
@@ -1064,7 +1094,7 @@ impl State {
         let fut = conn.open_path_ensure(quic_addr, path_status);
         match fut.path_id() {
             Some(path_id) => {
-                trace!(%conn_id, %path_id, ?path_status, "opening new path");
+                debug!(%conn_id, %path_id, ?path_status, "opening new path");
             }
             None => {
                 let ret = now_or_never(fut);
@@ -1079,6 +1109,52 @@ impl State {
                     _ => warn!(?ret, "Opening path failed"),
                 }
             }
+        }
+    }
+
+    /// fofoca patch (Initial fan-out, part 3): queue newly learned
+    /// custom-transport addresses for opening on every live connection.
+    ///
+    /// Paths are only ever opened on a live connection for the *selected*
+    /// address (`apply_selected_path`), and the selector can only select
+    /// among paths a connection already has — so an address learned *after*
+    /// the connection exists (a custom-transport address for a WebRTC
+    /// session negotiated over the relay, say) never becomes a path, the
+    /// selector never sees it, and the connection is pinned to the relay for
+    /// as long as the pair lives. Queuing the address through
+    /// `pending_open_paths` lets the client open it as a backup path; once
+    /// validated, the configured `PathSelector` can promote it.
+    ///
+    /// Custom addresses only: IP addresses have the whole holepunching
+    /// machinery, and relay addresses are re-added on `AddConnection`.
+    /// Skipped when a non-relay path is already selected — the pair already
+    /// has a better-than-relay path, mirroring `trigger_address_lookup`.
+    fn schedule_open_custom_paths<'a>(
+        &mut self,
+        addrs: impl Iterator<Item = &'a transports::Addr>,
+    ) {
+        if self
+            .selected_path
+            .as_ref()
+            .is_some_and(|selected| !selected.remote().is_relay())
+        {
+            return;
+        }
+        let mut queued = false;
+        for addr in addrs {
+            if !matches!(addr, transports::Addr::Custom(_)) {
+                continue;
+            }
+            let four_tuple = transports::FourTuple::from_remote(addr.clone());
+            if self.pending_open_paths.contains(&four_tuple) {
+                continue;
+            }
+            debug!(?addr, "scheduling open_path for a learned custom address");
+            self.pending_open_paths.push_back(four_tuple);
+            queued = true;
+        }
+        if queued && self.scheduled_open_path.is_none() {
+            self.scheduled_open_path = Some(Instant::now());
         }
     }
 
